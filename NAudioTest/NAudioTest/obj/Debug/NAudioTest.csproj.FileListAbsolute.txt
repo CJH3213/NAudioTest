@@ -24,3 +24,7 @@ E:\CJHFiles\.NET\NAudioTest\NAudioTest\NAudioTest\obj\Debug\NAudioTest.csproj.Co
 E:\CJHFiles\.NET\NAudioTest\NAudioTest\NAudioTest\obj\Debug\NAudioTest.exe
 E:\CJHFiles\.NET\NAudioTest\NAudioTest\NAudioTest\obj\Debug\NAudioTest.pdb
 E:\CJHFiles\.NET\NAudioTest\NAudioTest\NAudioTest\obj\Debug\NAudioTest.Form1.resources
+E:\CJHFiles\.NET\NAudioTest\NAudioTest\NAudioTest\bin\Debug\NAudioTest.exe.manifest
+E:\CJHFiles\.NET\NAudioTest\NAudioTest\NAudioTest\bin\Debug\NAudioTest.application
+E:\CJHFiles\.NET\NAudioTest\NAudioTest\NAudioTest\obj\Debug\NAudioTest.exe.manifest
+E:\CJHFiles\.NET\NAudioTest\NAudioTest\NAudioTest\obj\Debug\NAudioTest.application

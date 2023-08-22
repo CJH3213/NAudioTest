@@ -14,16 +14,36 @@ namespace NAudioTest
 {
     public partial class Form1 : Form
     {
+        private AudioMonitor mMonitor;
+        private const int n = 4096;
+        private List<float> srcSamples = new List<float>(n);
+
         public Form1()
         {
             InitializeComponent();
 
-            StartRecording();
+            // 启动音频监听
+            mMonitor = new AudioMonitor(OnAudioCapture);
+        }
 
+        // 找出数组最大值下标
+        public int MaxIndex<T>(T[] arr) where T : IComparable
+        {
+            int maxIndex = 0;
+            T max = arr[0];
+            for (int i = 1; i < arr.Length; i++)
+            {
+                if (arr[i].CompareTo(max) > 0)
+                {
+                    max = arr[i];
+                    maxIndex = i;
+                }
+            }
+            return maxIndex;
         }
 
         // 更新音频波形曲线图
-        public void UpdateWaveChart(float[] d)
+        private void UpdateWaveChart(float[] d)
         {
 
             if (chart_Wave.InvokeRequired == false)
@@ -37,135 +57,133 @@ namespace NAudioTest
             else
             {
                 Action<float[]> action = UpdateWaveChart;
-                this.Invoke(action, new object[] { d});
+                this.BeginInvoke(action, new object[] { d});
             }
         }
 
+        double[] mKeepData = new double[4096 / 2];
         // 更新FFT曲线图
-        public void UpdateFFTChart(double[] d, double baseFreq)
+        private void UpdateFFTChart(double[] d, double baseFreq)
         {
+            int minLen = Math.Min(mKeepData.Length, d.Length);
+            for(int i=0; i<minLen; i++)
+            {
+                // 新值大于旧值马上赋值，否则等下落
+                //if (d[i] > mKeepData[i])
+                //    mKeepData[i] = d[i];
+
+                // 上升和下降使用不同的速率
+                if (d[i] > mKeepData[i])
+                    mKeepData[i] += (d[i] - mKeepData[i]) * 1;
+                else
+                    mKeepData[i] += (d[i] - mKeepData[i]) * 0.2;
+            }
 
             if(chart_FFT.InvokeRequired == false)
             {
                 chart_FFT.Series["Series1"].Points.Clear();
-                for(int i = 0; i < d.Length; i++) 
+                for(int i = 0; i < minLen; i++) 
                 {
-                    chart_FFT.Series["Series1"].Points.AddXY(i* baseFreq, d[i]);            
+                    chart_FFT.Series["Series1"].Points.AddXY(i* baseFreq, mKeepData[i]+1.0);            
                 }
 
-                Console.WriteLine("{0}, {1}; ", d.Length, baseFreq);
-                int maxFreqIndex = MaxIndex(d);
-                Console.WriteLine("最大值：{0}, {1}; ", maxFreqIndex * baseFreq, d[maxFreqIndex]);
-                label_Info.Text = String.Format("最大值：频率{0:N3}, 幅度{1:N3}; ", maxFreqIndex * baseFreq, d[maxFreqIndex])
-                    + String.Format("FFT参数：点数{0}, 基频{1};", d.Length, baseFreq);
+                // 游标
+                chart_FFT.ChartAreas[0].CursorX.Interval = baseFreq;    // 游标步进距以基频为单位
+                UpdateCursorLabel();
+
+                // 显示参数
+                //Console.WriteLine("{0}, {1}; ", d.Length, baseFreq);
+                int maxFreqIndex = MaxIndex(mKeepData);
+                //Console.WriteLine("最大值：{0}, {1}; ", maxFreqIndex * baseFreq, d[maxFreqIndex]);
+                label_Info.Text = String.Format("最大值：频率{0:N3}, 幅度{1:N3}; ", maxFreqIndex * baseFreq, mKeepData[maxFreqIndex])
+                    + String.Format("FFT参数：点数{0}, 基频{1};", mKeepData.Length, baseFreq);
             }
             else
             {
                 Action<double[], double> action = UpdateFFTChart;
-                this.Invoke(action, new object[] {d, baseFreq});
+                this.BeginInvoke(action, new object[] {d, baseFreq});
             }
         }
 
-
-
-        // 开始录制输出音频
-        private void StartRecording()
+        // 光标信息文本
+        private void UpdateCursorLabel()
         {
-            WasapiLoopbackCapture cap = new WasapiLoopbackCapture();
-            cap.DataAvailable += (sender, e) =>      // 录制数据可用时触发此事件, 参数中包含音频数据
+            // 游标
+            var points = chart_FFT.Series["Series1"].Points;
+            double xPosMax = points.Last().XValue;  // x轴最大值
+            double xPos = chart_FFT.ChartAreas[0].CursorX.Position; // x轴的值
+            if (!Double.IsNaN(xPos))
             {
-                float[] allSamples = Enumerable      // 提取数据中的采样
-                    .Range(0, e.BytesRecorded / 4)   // 除以四是因为, 缓冲区内每 4 个字节构成一个浮点数, 一个浮点数是一个采样
-                    .Select(i => BitConverter.ToSingle(e.Buffer, i * 4))  // 转换为 float
-                    .ToArray();    // 转换为数组
+                // 限定光标必须在当前图表x坐标内，否则UI会卡死
+                if(xPos < 0) xPos = 0;
+                else if(xPos > xPosMax) xPos = xPosMax;
 
-                // 获取采样后, 在这里进行详细处理
-                var channelSamples = SplitChannels(allSamples, cap.WaveFormat.Channels);
-                var averageSamples = AverageChannels(channelSamples, cap.WaveFormat.Channels);
-                var fftResult = FFT(averageSamples);
-
-                double[] fftAbs = Enumerable.Range(0, fftResult.Length / 2)
-                .Select(i => {
-                    Complex c = fftResult[i]; 
-                    return Math.Sqrt(c.X * c.X + c.Y * c.Y); 
-                })
-                .ToArray();
-
-                // 计算FFT[1]的基础频率
-                double baseFreq = (double)cap.WaveFormat.SampleRate / fftResult.Length;
-
-                UpdateWaveChart(averageSamples);
-                UpdateFFTChart(fftAbs, baseFreq);
-            };
-            cap.StartRecording();   // 开始录制
-
+                int index = (int)(xPos / xPosMax * (points.Count - 1)); // 换算出所在下标
+                double yPos = points[index].YValues[0]; // 获取出y的值
+                label_CursorInfo.Text = String.Format("光标：{0:N3}, {1:N3};", points[index].XValue, yPos);
+            }
         }
 
-        // 分离声道
-        private float[][] SplitChannels(float[] allSamples, int channelCount)
+        // 音频捕获回调
+        private int OnAudioCapture(float[] allSamples)
         {
-            // 设定我们已经将刚刚的采样保存到了变量 AllSamples 中, 类型为 float[]
-            // int channelCount = cap.WaveFormat.Channels;   // WasapiLoopbackCapture 的 WaveFormat 指定了当前声音的波形格式, 其中包含就通道数
-            float[][] channelSamples = Enumerable
-                .Range(0, channelCount)
-                .Select(channel => Enumerable
-                    .Range(0, allSamples.Length / channelCount)
-                    .Select(i => allSamples[channel + i * channelCount])
-                    .ToArray())
-                .ToArray();
+            var channelSamples = mMonitor.SplitChannels(allSamples);
+            var averageSamples = mMonitor.AverageChannels(channelSamples);
+            srcSamples.AddRange(averageSamples);
 
-            return channelSamples;
-        }
-
-        // 对声道求均值
-        private float[] AverageChannels(float[][] channelSamples, int channelCount)
-        {
-            // 设定我们已经将分开了的采样保存到了变量 ChannelSamples 中, 类型为 float[][]
-            // 例如通道数为2, 那么左声道的采样为 ChannelSamples[0], 右声道为 ChannelSamples[1]
-            float[] averageSamples = Enumerable
-                .Range(0, channelSamples[0].Length)
-                .Select(index => Enumerable
-                    .Range(0, channelCount)
-                    .Select(channel => channelSamples[channel][index])
-                    .Average())
-                .ToArray();
-
-            return averageSamples;
-        }
-
-        // 傅里叶变换
-        private Complex[] FFT(float[] samples)
-        {
-            // 我们将对 AverageSamples 进行傅里叶变换, 得到一个复数数组
-
-            // 因为对于快速傅里叶变换算法, 需要数据长度为 2 的 n 次方, 这里进行
-            int log = (int)Math.Ceiling(Math.Log(samples.Length, 2));   // 取对数并向上取整
-            int newLen = (int)Math.Pow(2, log);                             // 计算新长度
-            float[] filledSamples = new float[newLen];
-            samples.CopyTo(filledSamples, 0);  // 拷贝到新数组
-            Complex[] complexSrc = filledSamples
-                .Select(v => new Complex() { X = v })        // 将采样转换为复数
-                .ToArray();
-            FastFourierTransform.FFT(false, log, complexSrc);   // 进行傅里叶变换
-
-            // 变换之后, complexSrc 则已经被处理过, 其中存储了频域信息
-            return complexSrc;
-        }
-
-        // 找出数组最大值下标
-        private int MaxIndex<T>(T[] arr) where T : IComparable
-        {
-            int maxIndex = 0;
-            T max = arr[0];
-            for(int i=1; i<arr.Length; i++)
+            if (srcSamples.Count >= n)   // 到达一定的采样量后再处理一次
             {
-                if (arr[i].CompareTo(max) > 0)
+                var srcSamples2 = srcSamples.Take(n).ToArray();
+                srcSamples.Clear();
+
+                if (mIsPause == false)
                 {
-                    max = arr[i];
-                    maxIndex = i;
+                    // 显示音频波形
+                    UpdateWaveChart(srcSamples2);
+
+                    double baseFreq;
+                    var fftResult = mMonitor.FFT(srcSamples2, out baseFreq);
+                    double[] fftAbs = fftResult.Take(fftResult.Length / 2)
+                    .Select(c => Math.Sqrt(c.X * c.X + c.Y * c.Y))
+                    .ToArray();
+
+                    // 计算2500Hz频率在数组的下标
+                    int index_2k5Hz = (int)(2500 / baseFreq);
+                    UpdateFFTChart(fftAbs.Take(index_2k5Hz).ToArray(), baseFreq);
                 }
             }
-            return maxIndex;
+
+            return 0;
         }
+
+        #region UI回调
+        bool mIsPause = false;
+        private void SetPauseFlag(bool b)
+        {
+            mIsPause = b;
+            btn_Pause.Text = mIsPause ? "继续" : "暂停";
+        }
+
+        private void btn_Pause_Click(object sender, EventArgs e)
+        {
+            SetPauseFlag(!mIsPause);
+        }
+
+        private void chart_FFT_MouseClick(object sender, MouseEventArgs e)
+        {
+            UpdateCursorLabel();
+        }
+
+        private void timer1_Tick(object sender, EventArgs e)
+        {
+            // 主线程，无须加锁
+            for(int i = 0; i< mKeepData.Length; i++)
+            {
+                //if (mKeepData[i] > 0)
+                //    mKeepData[i] -= 0.07;
+            }
+        }
+
+        #endregion
     }
 }
