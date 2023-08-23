@@ -27,7 +27,7 @@ namespace NAudioTest
         }
 
         // 找出数组最大值下标
-        public int MaxIndex<T>(T[] arr) where T : IComparable
+        private int MaxIndex<T>(T[] arr) where T : IComparable
         {
             int maxIndex = 0;
             T max = arr[0];
@@ -42,22 +42,54 @@ namespace NAudioTest
             return maxIndex;
         }
 
+        // 滑动滤波（n是滑动窗口半侧大小）
+        private double[] MovingFilter(double[] srcArr, int n)
+        {
+            double[] dstArr = new double[srcArr.Length];
+
+            // 左侧平均（随便整几个数填充一下不为0就行）
+            //for (int i = 0, w = 1; i < n; i++)
+            //{
+            //    double avg = 0;
+            //    for (int j = 0; j < w; j++)
+            //        avg += srcArr[j + i];
+            //    avg /= w;
+            //    dstArr[i] = srcArr[i];
+            //    w = i*2 +1;
+            //}
+
+            // 中间段滑动平均
+            int winLen = n * 2 + 1;
+            for(int  i=0; i<=srcArr.Length- winLen; i++)
+            {
+                double avg = 0;
+                for(int j=0; j< winLen; j++)
+                    avg += srcArr[j+i];
+                avg /= winLen;
+                dstArr[i + n] = avg; 
+            }
+
+            // 右侧懒得搞
+
+            return dstArr;
+        }
+
         // 更新音频波形曲线图
         private void UpdateWaveChart(float[] d)
         {
 
             if (chart_Wave.InvokeRequired == false)
             {
-                chart_Wave.Series["Series1"].Points.Clear();
+                chart_Wave.Series[0].Points.Clear();
                 for (int i = 0; i < d.Length; i++)
                 {
-                    chart_Wave.Series["Series1"].Points.AddXY(i, d[i]);
+                    chart_Wave.Series[0].Points.AddXY(i, d[i]);
                 }
             }
             else
             {
                 Action<float[]> action = UpdateWaveChart;
-                this.BeginInvoke(action, new object[] { d});
+                this.Invoke(action, new object[] { d});
             }
         }
 
@@ -65,6 +97,9 @@ namespace NAudioTest
         // 更新FFT曲线图
         private void UpdateFFTChart(double[] d, double baseFreq)
         {
+            // 对傅里叶结果滑动滤波，窗口3
+            var d2 = MovingFilter(d, 1);
+
             int minLen = Math.Min(mKeepData.Length, d.Length);
             for(int i=0; i<minLen; i++)
             {
@@ -73,33 +108,44 @@ namespace NAudioTest
                 //    mKeepData[i] = d[i];
 
                 // 上升和下降使用不同的速率
-                if (d[i] > mKeepData[i])
-                    mKeepData[i] += (d[i] - mKeepData[i]) * 1;
+                if (d2[i] >= mKeepData[i])
+                    mKeepData[i] += (d2[i] - mKeepData[i]) * 0.7;
                 else
-                    mKeepData[i] += (d[i] - mKeepData[i]) * 0.2;
+                    mKeepData[i] += (d2[i] - mKeepData[i]) * 0.25;
             }
 
-            if(chart_FFT.InvokeRequired == false)
+            // 对绘制结果滑动滤波，窗口5
+            var d3 = MovingFilter(mKeepData, 3);
+
+            // 图表UI更新
+            if (chart_FFT.InvokeRequired == false)
             {
-                chart_FFT.Series["Series1"].Points.Clear();
-                for(int i = 0; i < minLen; i++) 
+                chart_FFT.Series[0].Points.Clear();
+                for (int i = 0; i < minLen; i++)
                 {
-                    chart_FFT.Series["Series1"].Points.AddXY(i* baseFreq, mKeepData[i]+1.0);            
+                    chart_FFT.Series[0].Points.AddXY(i * baseFreq, d2[i]);
+                }
+
+                chart_FFT.Series[1].Points.Clear();
+                for (int i = 0; i < minLen; i++)
+                {
+                    chart_FFT.Series[1].Points.AddXY(i * baseFreq, d3[i]);
                 }
 
                 // 游标
-                chart_FFT.ChartAreas[0].CursorX.Interval = baseFreq;    // 游标步进距以基频为单位
-                UpdateCursorLabel();
+                //chart_FFT.ChartAreas[0].CursorX.Interval = baseFreq;    // 游标步进距以基频为单位
+                //UpdateCursorLabel();
 
                 // 显示参数
-                //Console.WriteLine("{0}, {1}; ", d.Length, baseFreq);
-                int maxFreqIndex = MaxIndex(mKeepData);
-                //Console.WriteLine("最大值：{0}, {1}; ", maxFreqIndex * baseFreq, d[maxFreqIndex]);
-                label_Info.Text = String.Format("最大值：频率{0:N3}, 幅度{1:N3}; ", maxFreqIndex * baseFreq, mKeepData[maxFreqIndex])
-                    + String.Format("FFT参数：点数{0}, 基频{1};", mKeepData.Length, baseFreq);
+                ////Console.WriteLine("{0}, {1}; ", d.Length, baseFreq);
+                //int maxFreqIndex = MaxIndex(mKeepData);
+                ////Console.WriteLine("最大值：{0}, {1}; ", maxFreqIndex * baseFreq, d[maxFreqIndex]);
+                //label_Info.Text = String.Format("最大值：频率{0:N3}, 幅度{1:N3}; ", maxFreqIndex * baseFreq, mKeepData[maxFreqIndex])
+                //    + String.Format("FFT参数：点数{0}, 基频{1};", mKeepData.Length, baseFreq);
             }
             else
             {
+                // 若在其他线程调用，委托到主线程更新UI
                 Action<double[], double> action = UpdateFFTChart;
                 this.BeginInvoke(action, new object[] {d, baseFreq});
             }
@@ -110,10 +156,10 @@ namespace NAudioTest
         {
             // 游标
             var points = chart_FFT.Series["Series1"].Points;
-            double xPosMax = points.Last().XValue;  // x轴最大值
             double xPos = chart_FFT.ChartAreas[0].CursorX.Position; // x轴的值
             if (!Double.IsNaN(xPos))
             {
+                double xPosMax = points.Last().XValue;  // x轴最大值
                 // 限定光标必须在当前图表x坐标内，否则UI会卡死
                 if(xPos < 0) xPos = 0;
                 else if(xPos > xPosMax) xPos = xPosMax;
@@ -174,16 +220,11 @@ namespace NAudioTest
             UpdateCursorLabel();
         }
 
-        private void timer1_Tick(object sender, EventArgs e)
-        {
-            // 主线程，无须加锁
-            for(int i = 0; i< mKeepData.Length; i++)
-            {
-                //if (mKeepData[i] > 0)
-                //    mKeepData[i] -= 0.07;
-            }
-        }
-
         #endregion
+
+        private void trackBar1_Scroll(object sender, EventArgs e)
+        {
+            chart_FFT.ChartAreas[0].AxisY.Maximum = trackBar1.Value;
+        }
     }
 }
